@@ -264,8 +264,6 @@ if st.button("Buscar"):
                 "Organismo": item["organismo"],
                 "Presupuesto": item["monto_disponible_clp"],
                 "Fecha de cierre": fecha_cierre,
-                "Ofertas": item.get("total_ofertas_reales"),
-                "Fecha de actualización de ofertas": item.get("fecha_actualizacion_ofertas"),
                 "Ficha": (
                     "https://buscador.mercadopublico.cl/"
                     f"ficha?code={item['codigo']}"
@@ -355,17 +353,6 @@ if st.session_state.datos_busqueda:
         .dt.tz_localize(None)
     )
 
-    df["Fecha de actualización de ofertas"] = (
-        pd.to_datetime(
-            df["Fecha de actualización de ofertas"],
-            format="ISO8601",
-            errors="coerce",
-            utc=True
-        )
-        .dt.tz_convert("America/Santiago")
-        .dt.tz_localize(None)
-    )
-
     # Filtro local
     palabra_busqueda = st_keyup(
         "Filtrar resultados por nombre",
@@ -384,8 +371,7 @@ if st.session_state.datos_busqueda:
             "Fecha de cierre",
             "Presupuesto",
             "Nombre",
-            "Código",
-            "Ofertas"
+            "Código"
         ],
         key="ordenar_por"
     )
@@ -413,8 +399,7 @@ if st.session_state.datos_busqueda:
             "Fecha de cierre": "Fecha de cierre",
             "Presupuesto": "Presupuesto",
             "Nombre": "Nombre",
-            "Código": "Codigo",
-            "Ofertas": "Ofertas"
+            "Código": "Codigo"
         }
 
         columna_orden = columnas_orden[ordenar_por]
@@ -436,39 +421,6 @@ if st.session_state.datos_busqueda:
     st.caption(
         f"Mostrando {len(df_filtrado)} de {len(df)} oportunidades"
     )
-
-
-    def colorear_ofertas(valor):
-        if pd.isna(valor):
-            return (
-                "background-color: #F1F3F5;"
-                "color: #6C757D;"
-                "font-weight: 600;"
-                "text-align: center;"
-            )
-
-        if valor <= 4:
-            return (
-                "background-color: #D9F2E3;"
-                "color: #14532D;"
-                "font-weight: 700;"
-                "text-align: center;"
-            )
-
-        if valor < 7:
-            return (
-                "background-color: #FFF1BF;"
-                "color: #7A4E00;"
-                "font-weight: 700;"
-                "text-align: center;"
-            )
-
-        return (
-            "background-color: #F8D7DA;"
-            "color: #842029;"
-            "font-weight: 700;"
-            "text-align: center;"
-        )
 
     columnas_a_ocultar = []
 
@@ -493,23 +445,6 @@ if st.session_state.datos_busqueda:
     df_mostrar = df_filtrado.drop(
         columns=columnas_a_ocultar,
         errors="ignore"
-    )
-
-    df_estilizado = (
-        df_mostrar.style
-        .map(
-            colorear_ofertas,
-            subset=["Ofertas"]
-        )
-        .format(
-            {
-                "Ofertas": lambda valor: (
-                    ""
-                    if pd.isna(valor)
-                    else f"{int(valor)}"
-                )
-            }
-        )
     )
 
     # Dejamos editable solamente la columna Actualizar
@@ -570,20 +505,6 @@ if st.session_state.datos_busqueda:
             return
 
         nuevo_total = resultado["total_ofertas_reales"]
-        nueva_fecha = resultado.get(
-            "fecha_actualizacion_ofertas"
-        )
-
-        for compra in st.session_state.datos_busqueda:
-            if compra["Codigo"] == codigo:
-                compra["Ofertas"] = nuevo_total
-
-                if "Fecha de actualización de ofertas" in compra:
-                    compra[
-                        "Fecha de actualización de ofertas"
-                    ] = nueva_fecha
-
-                break
 
         if codigo in st.session_state.compras_ofertadas:
             estado_panel = "✅ Ofertada"
@@ -615,16 +536,12 @@ if st.session_state.datos_busqueda:
 
 
     df_editado = st.data_editor(
-        df_estilizado,
+        df_mostrar,
         hide_index=True,
         width="stretch",
         disabled=columnas_bloqueadas,
         key="tabla_compras",
         column_config={
-            "Ofertas": st.column_config.NumberColumn(
-                "Ofertas",
-                format="%d"
-            ),
             "Ficha": st.column_config.LinkColumn(
                 "Ficha",
                 display_text="🔗 Revisar"
@@ -635,10 +552,6 @@ if st.session_state.datos_busqueda:
             ),
             "Fecha de cierre": st.column_config.DatetimeColumn(
                 "Fecha de cierre",
-                format="DD-MM-YYYY HH:mm"
-            ),
-            "Fecha de actualización de ofertas": st.column_config.DatetimeColumn(
-                "Fecha de actualización de ofertas",
                 format="DD-MM-YYYY HH:mm"
             ),
             "Actualizar": st.column_config.ButtonColumn(

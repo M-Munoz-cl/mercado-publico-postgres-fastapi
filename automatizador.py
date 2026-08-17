@@ -2,11 +2,10 @@ import threading
 import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from app.logger import logger_compras, logger_ofertas, logger_errores
+from app.logger import logger_compras, logger_errores
 
 from app.database import SessionLocal
 from app.sincronizador import (
-    actualizar_ofertas_reales,
     sincronizar_todas_las_regiones,
     reconciliar_todas_las_regiones
 )
@@ -21,8 +20,6 @@ ZONA_CHILE = ZoneInfo("America/Santiago")
 INTERVALO_COMPRAS_DIA = int(os.getenv("INTERVALO_COMPRAS_DIA", 240))         # 4 minutos
 INTERVALO_COMPRAS_NOCHE_TEMPRANA = int(os.getenv("INTERVALO_COMPRAS_NOCHE_TEMPRANA", 900))   # 15 minutos
 INTERVALO_COMPRAS_MADRUGADA = int(os.getenv("INTERVALO_COMPRAS_MADRUGADA", 1200))  # 20 minutos
-
-INTERVALO_OFERTAS = int(os.getenv("INTERVALO_OFERTAS", 300))   # 5 minutos
 
 HORAS_VENTANA = int(os.getenv("HORAS_VENTANA", 2))
 
@@ -74,48 +71,6 @@ def ejecutar_sincronizacion_compras():
             f"[COMPRAS] Error en sincronización: {error}"
         )
         logger_errores.exception("Error en la sincronización de compras")
-
-    finally:
-        db.close()
-
-
-def ejecutar_actualizacion_ofertas():
-    db = SessionLocal()
-
-    try:
-        inicio = datetime.now(ZONA_CHILE)
-
-        print(
-            f"\n[{inicio:%Y-%m-%d %H:%M:%S}] "
-            "[OFERTAS] Iniciando actualización"
-        )
-        logger_ofertas.info("Iniciando actualización de ofertas")
-
-        resultado = actualizar_ofertas_reales(
-            db=db
-        )
-
-        fin = datetime.now(ZONA_CHILE)
-        duracion = (fin - inicio).total_seconds()
-
-        print(
-            f"[{fin:%Y-%m-%d %H:%M:%S}] "
-            f"[OFERTAS] Actualización terminada "
-            f"en {duracion:.2f} segundos"
-        )
-        logger_ofertas.info("Actualización terminada en %.2f segundos", duracion)
-
-        print(f"[OFERTAS] Resultado: {resultado}")
-        logger_ofertas.info("Resultado: %s", resultado)
-
-    except Exception as error:
-        db.rollback()
-
-        print(
-            f"[{datetime.now(ZONA_CHILE):%Y-%m-%d %H:%M:%S}] "
-            f"[OFERTAS] Error en actualización: {error}"
-        )
-        logger_errores.exception("Error en la actualización de ofertas")
 
     finally:
         db.close()
@@ -216,21 +171,6 @@ def ciclo_compras():
         time.sleep(intervalo_compras)
 
 
-def ciclo_ofertas():
-    while True:
-        ejecutar_actualizacion_ofertas()
-
-        intervalo_minutos = INTERVALO_OFERTAS // 60
-
-        print(
-            f"[OFERTAS] Esperando {intervalo_minutos} minutos "
-            "para la próxima actualización..."
-        )
-        logger_ofertas.info("Esperando %s minutos para la próxima actualización", intervalo_minutos)
-
-        time.sleep(INTERVALO_OFERTAS)
-
-
 def ciclo_reconciliacion():
     while True:
         ahora = datetime.now(ZONA_CHILE)
@@ -269,7 +209,6 @@ def ciclo_reconciliacion():
 def iniciar_automatizador():
     print("Automatizador iniciado")
     logger_compras.info("Automatizador iniciado")
-    logger_ofertas.info("Automatizador iniciado")
     print(
         f"Compras: ventana de {HORAS_VENTANA} horas\n"
         f"  06:00–21:00: cada {INTERVALO_COMPRAS_DIA // 60} minutos\n"
@@ -277,9 +216,6 @@ def iniciar_automatizador():
         f"{INTERVALO_COMPRAS_NOCHE_TEMPRANA // 60} minutos\n"
         f"  00:00–06:00: cada "
         f"{INTERVALO_COMPRAS_MADRUGADA // 60} minutos"
-    )
-    print(
-        f"Ofertas: cada {INTERVALO_OFERTAS // 60} minutos"
     )
 
     print(
@@ -293,12 +229,6 @@ def iniciar_automatizador():
         daemon=True
     )
 
-    hilo_ofertas = threading.Thread(
-        target=ciclo_ofertas,
-        name="hilo-ofertas",
-        daemon=True
-    )
-
     hilo_reconciliacion = threading.Thread(
         target=ciclo_reconciliacion,
         name="hilo-reconciliacion",
@@ -306,7 +236,6 @@ def iniciar_automatizador():
     )
 
     hilo_compras.start()
-    hilo_ofertas.start()
     hilo_reconciliacion.start()
 
     try:
@@ -316,7 +245,6 @@ def iniciar_automatizador():
     except KeyboardInterrupt:
         print("\nAutomatizador detenido por el usuario.")
         logger_compras.info("Automatizador detenido por el usuario")
-        logger_ofertas.info("Automatizador detenido por el usuario")
 
 if __name__ == "__main__":
     iniciar_automatizador()

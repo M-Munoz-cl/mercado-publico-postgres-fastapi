@@ -9,9 +9,7 @@ from sqlalchemy.orm import Session
 from app.config import BASE_URL, HEADERS
 from app.crud import (
     guardar_o_actualizar_compra,
-    obtener_compras_pendientes_ofertas,
     guardar_total_ofertas,
-    registrar_fallo_actualizacion,
     obtener_codigos_publicados_hoy_region,
     marcar_compras_no_publicadas
 )
@@ -26,8 +24,6 @@ TAMANO_PAGINA = 50
 MAX_WORKERS = 20
 TTL_POR_DEFECTO_HORAS = 2
 
-MAX_WORKERS_OFERTAS = 6
-LIMITE_OFERTAS_POR_CICLO = 500
 
 cliente_buscador = ClienteBuscador()
 
@@ -500,109 +496,6 @@ def actualizar_ofertas_compra(
     except Exception:
         db.rollback()
         raise
-
-
-def actualizar_ofertas_reales(
-    db: Session,
-    limite: int = LIMITE_OFERTAS_POR_CICLO
-) -> dict:
-
-    pendientes = obtener_compras_pendientes_ofertas(
-        db=db,
-        limite=limite
-    )
-
-    if not pendientes:
-        return {
-            "pendientes": 0,
-            "actualizadas": 0,
-            "fallidas": 0
-        }
-
-    print(
-        f"Iniciando actualización de ofertas: "
-        f"{len(pendientes)} compras pendientes"
-    )
-
-    compras_por_codigo = {
-        compra.codigo: compra
-        for compra in pendientes
-    }
-
-    codigos = list(compras_por_codigo.keys())
-
-    resultados = {}
-
-    def consultar_ofertas(codigo: str):
-        try:
-            total = cliente_buscador.obtener_total_ofertas(
-                codigo
-            )
-
-            if total is None:
-                raise ValueError(
-                    "La ficha no entregó total_ofertas_recibidas"
-                )
-
-            return codigo, int(total), None
-
-        except Exception as error:
-            return codigo, None, str(error)
-
-    with ThreadPoolExecutor(
-        max_workers=MAX_WORKERS_OFERTAS
-    ) as executor:
-
-        for codigo, total, error in executor.map(
-            consultar_ofertas,
-            codigos
-        ):
-            resultados[codigo] = {
-                "total": total,
-                "error": error
-            }
-
-    actualizadas = 0
-    fallidas = 0
-
-    try:
-        for codigo, resultado in resultados.items():
-
-            compra = compras_por_codigo[codigo]
-
-            if resultado["error"] is None:
-
-                guardar_total_ofertas(
-                    db=db,
-                    compra=compra,
-                    total_ofertas=resultado["total"]
-                )
-
-                actualizadas += 1
-
-            else:
-                registrar_fallo_actualizacion(
-                    compra=compra
-                )
-
-                fallidas += 1
-
-                print(
-                    f"Error obteniendo ofertas de {codigo}: "
-                    f"{resultado['error']}"
-                )
-
-        db.commit()
-
-    except Exception:
-        db.rollback()
-        raise
-
-    return {
-        "pendientes": len(pendientes),
-        "actualizadas": actualizadas,
-        "fallidas": fallidas
-    }
 
 
 def sincronizar_todas_las_regiones(
