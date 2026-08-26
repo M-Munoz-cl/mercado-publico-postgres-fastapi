@@ -1,6 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-from time import perf_counter
+from time import perf_counter, sleep
 from zoneinfo import ZoneInfo
 
 import requests
@@ -60,52 +60,85 @@ def obtener_pagina(
     cambio_desde = desde_chile.strftime("%Y-%m-%dT%H:%M:%SZ")
     cambio_hasta = ahora_chile.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    response = requests.get(
-        f"{BASE_URL}/v2/compra-agil",
-        headers=HEADERS,
-        params={
-            "cambio_desde": cambio_desde,
-            "cambio_hasta": cambio_hasta,
-            "tamano_pagina": TAMANO_PAGINA,
-            "numero_pagina": numero_pagina,
-            "estado": "publicada",
-            "region": region_id
-        },
-        timeout=30
-    )
+    esperas = [5, 10, 20]
+    max_intentos = 4
 
-    if response.status_code != 200:
+    for intento in range(1, max_intentos + 1):
+        try:
+            response = requests.get(
+                f"{BASE_URL}/v2/compra-agil",
+                headers=HEADERS,
+                params={
+                    "cambio_desde": cambio_desde,
+                    "cambio_hasta": cambio_hasta,
+                    "tamano_pagina": TAMANO_PAGINA,
+                    "numero_pagina": numero_pagina,
+                    "estado": "publicada",
+                    "region": region_id
+                },
+                timeout=30
+            )
+        except requests.RequestException as error:
+
+            print(
+                f"Error de conexión en región {region_id}, "
+                f"página {numero_pagina}, "
+                f"intento {intento}/{max_intentos}: {error}"
+            )
+
+        else:
+            if response.status_code == 200:
+
+                data = response.json()
+                payload = data.get("payload")
+
+                if not payload:
+                    print(
+                        f"La API respondió sin payload "
+                        f"en región {region_id}, página {numero_pagina}"
+                    )
+
+                    return [], {}
+
+                print(
+                    f"DEBUG región={region_id}, "
+                    f"página={numero_pagina}, "
+                    f"desde={cambio_desde}, "
+                    f"hasta={cambio_hasta}, "
+                    f"items={len(payload.get('items', []))}, "
+                    f"paginacion={payload.get('paginacion', {})}"
+                )
+
+                return (
+                    payload.get("items", []),
+                    payload.get("paginacion", {})
+                )
+
+            print(
+                f"Error HTTP {response.status_code} "
+                f"en región {region_id}, página {numero_pagina}, "
+                f"intento {intento}/{max_intentos}"
+            )
+
+        if intento == max_intentos:
+            break
+
+        espera = esperas[intento - 1]
+
         print(
-            f"Error HTTP {response.status_code} "
-            f"en región {region_id}, página {numero_pagina}"
+            f"Reintentando región {region_id}, "
+            f"página {numero_pagina} "
+            f"en {espera} segundos..."
         )
 
-        return [], {}
-
-    data = response.json()
-    payload = data.get("payload")
-
-    if not payload:
-        print(
-            f"La API respondió sin payload "
-            f"en región {region_id}, página {numero_pagina}"
-        )
-
-        return [], {}
+        sleep(espera)
 
     print(
-        f"DEBUG región={region_id}, "
-        f"página={numero_pagina}, "
-        f"desde={cambio_desde}, "
-        f"hasta={cambio_hasta}, "
-        f"items={len(payload.get('items', []))}, "
-        f"paginacion={payload.get('paginacion', {})}"
+        f"Página abandonada después de {max_intentos} intentos: "
+        f"región {region_id}, página {numero_pagina}"
     )
 
-    return (
-        payload.get("items", []),
-        payload.get("paginacion", {})
-    )
+    return [], {}
 
 
 def obtener_pagina_reconciliacion(

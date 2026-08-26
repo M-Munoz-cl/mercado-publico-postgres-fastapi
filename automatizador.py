@@ -27,6 +27,15 @@ HORA_RECONCILIACION = int(os.getenv("HORA_RECONCILIACION", 23))
 MINUTO_RECONCILIACION = int(os.getenv("MINUTO_RECONCILIACION", 30))
 
 
+
+DIAS_RECUPERACION = int(os.getenv("DIAS_RECUPERACION", 2))
+
+HORA_RECUPERACION = int(os.getenv("HORA_RECUPERACION", 0))
+MINUTO_RECUPERACION = int(os.getenv("MINUTO_RECUPERACION", 5))
+
+lock_compras = threading.Lock()
+
+
 def ejecutar_sincronizacion_compras():
     db = SessionLocal()
 
@@ -39,12 +48,14 @@ def ejecutar_sincronizacion_compras():
         )
         logger_compras.info("Iniciando sincronización")
 
-        resultado = sincronizar_todas_las_regiones(
-            db=db,
-            dias=None,
-            horas=HORAS_VENTANA,
-            region_id=None
-        )
+        with lock_compras:
+
+            resultado = sincronizar_todas_las_regiones(
+                db=db,
+                dias=None,
+                horas=HORAS_VENTANA,
+                region_id=None
+            )
 
         fin = datetime.now(ZONA_CHILE)
         duracion = (fin - inicio).total_seconds()
@@ -76,6 +87,74 @@ def ejecutar_sincronizacion_compras():
         db.close()
 
 
+def ejecutar_recuperacion_compras():
+
+    db = SessionLocal()
+
+    try:
+
+        inicio = datetime.now(ZONA_CHILE)
+
+        print(
+            f"\n[{inicio:%Y-%m-%d %H:%M:%S}] "
+            f"[RECUPERACION] Iniciando recuperación "
+            f"de los últimos {DIAS_RECUPERACION} días"
+        )
+
+        logger_compras.info(
+            "Iniciando recuperación de los últimos %s días",
+            DIAS_RECUPERACION
+        )
+
+        with lock_compras:
+
+            resultado = sincronizar_todas_las_regiones(
+                db=db,
+                dias=DIAS_RECUPERACION,
+                horas=None,
+                region_id=None
+            )
+
+        fin = datetime.now(ZONA_CHILE)
+        duracion = (fin - inicio).total_seconds()
+
+        print(
+            f"[{fin:%Y-%m-%d %H:%M:%S}] "
+            f"[RECUPERACION] Recuperación terminada "
+            f"en {duracion:.2f} segundos"
+        )
+
+        print(
+            f"[RECUPERACION] Resultado: {resultado}"
+        )
+
+        logger_compras.info(
+            "Recuperación terminada en %.2f segundos",
+            duracion
+        )
+
+        logger_compras.info(
+            "Resultado recuperación: %s",
+            resultado
+        )
+
+    except Exception as error:
+
+        db.rollback()
+
+        print(
+            f"[{datetime.now(ZONA_CHILE):%Y-%m-%d %H:%M:%S}] "
+            f"[RECUPERACION] Error: {error}"
+        )
+
+        logger_errores.exception(
+            "Error en recuperación diaria de compras"
+        )
+
+    finally:
+        db.close()
+
+
 def ejecutar_reconciliacion():
     db = SessionLocal()
 
@@ -90,9 +169,10 @@ def ejecutar_reconciliacion():
             "Iniciando reconciliación diaria"
         )
 
-        resultado = reconciliar_todas_las_regiones(
-            db=db
-        )
+        with lock_compras:
+            resultado = reconciliar_todas_las_regiones(
+                db=db
+            )
 
         fin = datetime.now(ZONA_CHILE)
         duracion = (fin - inicio).total_seconds()
@@ -206,6 +286,43 @@ def ciclo_reconciliacion():
         ejecutar_reconciliacion()
 
 
+def ciclo_recuperacion():
+
+    while True:
+
+        ahora = datetime.now(ZONA_CHILE)
+
+        proxima_ejecucion = ahora.replace(
+            hour=HORA_RECUPERACION,
+            minute=MINUTO_RECUPERACION,
+            second=0,
+            microsecond=0
+        )
+
+        if proxima_ejecucion <= ahora:
+            proxima_ejecucion += timedelta(days=1)
+
+        segundos_espera = (
+            proxima_ejecucion - ahora
+        ).total_seconds()
+
+        print(
+            "[RECUPERACION] Próxima ejecución: "
+            f"{proxima_ejecucion:%Y-%m-%d %H:%M:%S}"
+        )
+
+        logger_compras.info(
+            "Próxima recuperación: %s",
+            proxima_ejecucion.strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+        )
+
+        time.sleep(segundos_espera)
+
+        ejecutar_recuperacion_compras()
+
+
 def iniciar_automatizador():
     print("Automatizador iniciado")
     logger_compras.info("Automatizador iniciado")
@@ -223,6 +340,11 @@ def iniciar_automatizador():
         f"{HORA_RECONCILIACION:02d}:{MINUTO_RECONCILIACION:02d}"
     )
 
+    print(
+        f"Recuperación diaria: últimos {DIAS_RECUPERACION} días "
+        f"a las {HORA_RECUPERACION:02d}:{MINUTO_RECUPERACION:02d}"
+    )
+
     hilo_compras = threading.Thread(
         target=ciclo_compras,
         name="hilo-compras",
@@ -235,8 +357,15 @@ def iniciar_automatizador():
         daemon=True
     )
 
+    hilo_recuperacion = threading.Thread(
+        target=ciclo_recuperacion,
+        name="hilo-recuperacion",
+        daemon=True
+    )
+
     hilo_compras.start()
     hilo_reconciliacion.start()
+    hilo_recuperacion.start()
 
     try:
         while True:
