@@ -761,13 +761,6 @@ def reconciliar_todas_las_regiones(
                 f"no publicadas={marcadas}"
             )
 
-            if codigos_cancelados:
-                print(
-                    f"Códigos marcados como no_publicada "
-                    f"en {region_nombre}: "
-                    f"{sorted(codigos_cancelados)}"
-                )
-
             detalle_regiones.append({
                 "region_id": region_id,
                 "region_nombre": region_nombre,
