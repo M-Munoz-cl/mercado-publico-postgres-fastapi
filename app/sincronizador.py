@@ -52,14 +52,9 @@ def calcular_ttl(dias: int | None = None, horas: int | None = None) -> int:
 def obtener_pagina(
     region_id: int,
     numero_pagina: int,
-    horas: int
+    cambio_desde: str,
+    cambio_hasta: str
 ) -> tuple[list, dict]:
-
-    ahora_chile = datetime.now(ZONA_CHILE)
-    desde_chile = ahora_chile - timedelta(hours=horas)
-
-    cambio_desde = desde_chile.strftime("%Y-%m-%dT%H:%M:%SZ")
-    cambio_hasta = ahora_chile.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     esperas = [5, 10, 20]
     max_intentos = 4
@@ -352,13 +347,6 @@ def transformar_item(
     convocatoria = item.get("convocatoria") or {}
     fechas = item.get("fechas") or {}
     estado = item.get("estado") or {}
-
-
-    if codigo == "799512-980-COT26":
-        print("FECHA CRUDA PRIMER:", fechas.get("fecha_cierre_primer_llamado"))
-        print("FECHA CRUDA SEGUNDO:", fechas.get("fecha_cierre_segundo_llamado"))
-
-
     monto = montos.get("monto_disponible_clp")
 
     if monto is not None:
@@ -421,10 +409,17 @@ def sincronizar_region(
     else:
         horas_consulta = horas or TTL_POR_DEFECTO_HORAS
 
+    ahora_chile = datetime.now(ZONA_CHILE)
+    desde_chile = ahora_chile - timedelta(hours=horas_consulta)
+
+    cambio_desde = desde_chile.strftime("%Y-%m-%dT%H:%M:%SZ")
+    cambio_hasta = ahora_chile.strftime("%Y-%m-%dT%H:%M:%SZ")
+
     items_primera_pagina, paginacion = obtener_pagina(
         region_id=region_id,
         numero_pagina=1,
-        horas=horas_consulta
+        cambio_desde=cambio_desde,
+        cambio_hasta=cambio_hasta
     )
 
     if not paginacion:
@@ -455,7 +450,8 @@ def sincronizar_region(
                 obtener_pagina,
                 [region_id] * (total_paginas - 1),
                 range(2, total_paginas + 1),
-                [horas_consulta] * (total_paginas - 1)
+                [cambio_desde] * (total_paginas - 1),
+                [cambio_hasta] * (total_paginas - 1)
             )
 
             for items_pagina, _ in resultados:
@@ -472,12 +468,6 @@ def sincronizar_region(
         f"{len(codigos_encontrados)} compras encontradas "
         f"en las ultimas {horas_consulta} horas"
     )
-
-    if codigos_encontrados:
-        print(
-            f"Códigos encontrados en {region_nombre}: "
-            f"{codigos_encontrados}"
-        )
 
     procesadas = 0
     omitidas = 0
