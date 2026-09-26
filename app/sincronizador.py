@@ -22,6 +22,7 @@ ZONA_CHILE = ZoneInfo("America/Santiago")
 
 TAMANO_PAGINA = 50
 MAX_WORKERS = 20
+MAX_WORKERS_RECONCILIACION = 5
 TTL_POR_DEFECTO_HORAS = 2
 
 
@@ -147,12 +148,11 @@ def obtener_pagina_reconciliacion(
     dias: int
 ) -> tuple[list, dict, bool]:
     """
-    Obtiene las compras que siguen publicadas desde hoy
-    a las 00:00 hasta el momento actual, en horario de Chile.
+    Obtiene las compras publicadas dentro del período
+    indicado para la reconciliación.
     """
 
     ahora_chile = datetime.now(ZONA_CHILE)
-
     inicio_hoy_chile = ahora_chile - timedelta(days=dias)
 
     cambio_desde = inicio_hoy_chile.strftime(
@@ -163,84 +163,118 @@ def obtener_pagina_reconciliacion(
         "%Y-%m-%dT%H:%M:%SZ"
     )
 
-    try:
-        response = requests.get(
-            f"{BASE_URL}/v2/compra-agil",
-            headers=HEADERS,
-            params={
-                "cambio_desde": cambio_desde,
-                "cambio_hasta": cambio_hasta,
-                "tamano_pagina": TAMANO_PAGINA,
-                "numero_pagina": numero_pagina,
-                "estado": "publicada",
-                "region": region_id
-            },
-            timeout=30
-        )
+    esperas = [5, 10, 20]
+    max_intentos = 4
 
-    except requests.RequestException as error:
+    for intento in range(1, max_intentos + 1):
+
+        try:
+            response = requests.get(
+                f"{BASE_URL}/v2/compra-agil",
+                headers=HEADERS,
+                params={
+                    "cambio_desde": cambio_desde,
+                    "cambio_hasta": cambio_hasta,
+                    "tamano_pagina": TAMANO_PAGINA,
+                    "numero_pagina": numero_pagina,
+                    "estado": "publicada",
+                    "region": region_id
+                },
+                timeout=30
+            )
+
+        except requests.RequestException as error:
+            print(
+                f"Error de conexión en reconciliación: "
+                f"región={region_id}, "
+                f"página={numero_pagina}, "
+                f"intento={intento}/{max_intentos}, "
+                f"error={error}"
+            )
+
+        else:
+            if response.status_code == 200:
+
+                try:
+                    data = response.json()
+
+                except ValueError:
+                    print(
+                        f"Respuesta JSON inválida en reconciliación: "
+                        f"región={region_id}, "
+                        f"página={numero_pagina}, "
+                        f"intento={intento}/{max_intentos}"
+                    )
+
+                else:
+                    payload = data.get("payload")
+
+                    if not payload:
+                        print(
+                            f"Reconciliación sin payload: "
+                            f"región={region_id}, "
+                            f"página={numero_pagina}, "
+                            f"intento={intento}/{max_intentos}"
+                        )
+
+                    else:
+                        items = payload.get("items", [])
+                        paginacion = payload.get(
+                            "paginacion", {}
+                        )
+
+                        if not paginacion:
+                            print(
+                                f"Reconciliación sin paginación: "
+                                f"región={region_id}, "
+                                f"página={numero_pagina}, "
+                                f"intento={intento}/{max_intentos}"
+                            )
+
+                        else:
+                            print(
+                                f"RECONCILIACIÓN "
+                                f"región={region_id}, "
+                                f"página={numero_pagina}, "
+                                f"desde={cambio_desde}, "
+                                f"hasta={cambio_hasta}, "
+                                f"items={len(items)}, "
+                                f"intento={intento}/{max_intentos}"
+                            )
+
+                            return items, paginacion, True
+
+            else:
+                print(
+                    f"Error HTTP {response.status_code} "
+                    f"en reconciliación: "
+                    f"región={region_id}, "
+                    f"página={numero_pagina}, "
+                    f"intento={intento}/{max_intentos}"
+                )
+
+        if intento == max_intentos:
+            break
+
+        espera = esperas[intento - 1]
+
         print(
-            f"Error de conexión en reconciliación: "
+            f"Reintentando reconciliación "
             f"región={region_id}, "
-            f"página={numero_pagina}, "
-            f"error={error}"
+            f"página={numero_pagina} "
+            f"en {espera} segundos..."
         )
 
-        return [], {}, False
-
-    if response.status_code != 200:
-        print(
-            f"Error HTTP {response.status_code} "
-            f"en reconciliación: "
-            f"región={region_id}, "
-            f"página={numero_pagina}"
-        )
-
-        return [], {}, False
-
-    try:
-        data = response.json()
-    except ValueError:
-        print(
-            f"Respuesta JSON inválida en reconciliación: "
-            f"región={region_id}, "
-            f"página={numero_pagina}"
-        )
-
-        return [], {}, False
-
-    payload = data.get("payload")
-
-    if not payload:
-        print(
-            f"Reconciliación sin payload: "
-            f"región={region_id}, "
-            f"página={numero_pagina}"
-        )
-
-        return [], {}, False
-
-    items = payload.get("items", [])
-    paginacion = payload.get("paginacion", {})
-
-    if not paginacion:
-        print(
-            f"Reconciliación sin paginación: "
-            f"región={region_id}, "
-            f"página={numero_pagina}"
-        )
-
-        return [], {}, False
+        sleep(espera)
 
     print(
-        f"RECONCILIACIÓN región={region_id}, "
-        f"página={numero_pagina}, "
-        f"desde={cambio_desde}, "
-        f"hasta={cambio_hasta}, "
-        f"items={len(items)}"
+        f"Página de reconciliación abandonada después de "
+        f"{max_intentos} intentos: "
+        f"región={region_id}, "
+        f"página={numero_pagina}"
     )
 
-    return items, paginacion, True
+    return [], {}, False
 
 
 
@@ -646,7 +680,7 @@ def reconciliar_todas_las_regiones(
             if total_paginas > 1:
 
                 with ThreadPoolExecutor(
-                    max_workers=MAX_WORKERS
+                    max_workers=MAX_WORKERS_RECONCILIACION
                 ) as executor:
 
                     resultados = executor.map(
